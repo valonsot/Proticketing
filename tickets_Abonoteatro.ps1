@@ -13,50 +13,74 @@ Add-Type -Path $dllPath
 
 
 function MiFuncionPrincipal {
-    $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
-    $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-
-    $options.AddArgument("--window-size=1920,1080")
-    $options.AddArgument("--user-agent=$uAgent")
-    # Descomenta la siguiente línea si quieres que sea invisible tras comprobar que funciona
-    # $options.AddArgument("--headless=new") 
-    try {
-        Write-Host "--- Iniciando Validación Cloudflare ---" -ForegroundColor Cyan
-        $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($driverPath, $options)
-
-        $driver.Navigate().GoToUrl($urlPagina)
-        Write-Host "Esperando aviso de cookies..." -ForegroundColor Yellow
-        Start-Sleep -Seconds 6
-
-        # 2. INTERACTUAR CON EL BOTÓN DE COOKIES
+           # 1. INSTALAR Y CARGAR LIBRERÍAS (Solución para GitHub)
+        if (-not (Get-Module -ListAvailable Selenium)) {
+            Write-Host "Instalando módulo Selenium..." -ForegroundColor Cyan
+            Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
+        }
+        
+        # Localizar el DLL de Selenium dentro del módulo instalado para cargarlo en memoria
+        $modulePath = (Get-Module -ListAvailable Selenium).ModuleBase[0]
+        $dllPath = Get-ChildItem -Path $modulePath -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+        Add-Type -Path $dllPath
+        
+        # 2. CONFIGURACIÓN DE CHROME
+        $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
+        $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        
+        $options.AddArgument("--window-size=1920,1080")
+        $options.AddArgument("--user-agent=$uAgent")
+        
+        # EN GITHUB ES OBLIGATORIO EL MODO HEADLESS
+        $options.AddArgument("--headless=new") 
+        $options.AddArgument("--no-sandbox")
+        $options.AddArgument("--disable-dev-shm-usage")
+        
+        # Variable para la URL (puedes definirla aquí o pasarla como parámetro)
+        $urlPagina = "https://www.proticketing.com/tu_evento" 
+        
         try {
-            $botonAceptar = $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(., 'Aceptar Todas')]"))
-            if ($botonAceptar) {
-                Write-Host "Pulsando 'Aceptar Todas' para desbloquear sesión..." -ForegroundColor Green
-                $botonAceptar.Click()
-                Start-Sleep -Seconds 5 # Tiempo vital para que Cloudflare genere el ticket cf_clearance
-            }
-        }
-        catch {
-            Write-Warning "No se detectó botón de cookies."
-        }
-
-        # 3. CREAR SESIÓN DE POWERSHELL Y CAPTURAR COOKIES
-        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-        $session.UserAgent = $uAgent
-
-        $cookiesSelenium = $driver.Manage().Cookies.AllCookies
-        foreach ($c in $cookiesSelenium) {
+            Write-Host "--- Iniciando Validación Cloudflare en GitHub ---" -ForegroundColor Cyan
             
+            # En GitHub Actions, el driver ya está en el PATH, no necesitamos $driverPath
+            # Pasamos $null o simplemente no ponemos ruta
+            $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($options)
+        
+            $driver.Navigate().GoToUrl($urlPagina)
+            Write-Host "Esperando aviso de cookies..." -ForegroundColor Yellow
+            Start-Sleep -Seconds 10 # Un poco más de tiempo por ser entorno nube
+        
+            # 2. INTERACTUAR CON EL BOTÓN DE COOKIES
+            try {
+                $botonAceptar = $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(., 'Aceptar Todas')]"))
+                if ($botonAceptar) {
+                    Write-Host "Pulsando 'Aceptar Todas'..." -ForegroundColor Green
+                    $botonAceptar.Click()
+                    Start-Sleep -Seconds 5 
+                }
+            }
+            catch {
+                Write-Warning "No se detectó botón de cookies o ya se pasó."
+            }
+        
+            # 3. CAPTURAR COOKIES
+            $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+            $session.UserAgent = $uAgent
+        
+            $cookiesSelenium = $driver.Manage().Cookies.AllCookies
+            foreach ($c in $cookiesSelenium) {
                 $newCookie = New-Object System.Net.Cookie($c.Name, $c.Value, "/", ".proticketing.com")
                 $session.Cookies.Add($newCookie)
                 Write-Host "Capturada: $($c.Name)" -ForegroundColor Gray
-            
-        }
-
-        # Cerramos navegador
-        $driver.Quit()
+            }
         
+            Write-Host "Sesión preparada con éxito." -ForegroundColor Green
+        
+        }
+        catch {
+            Write-Error "Error en la ejecución: $($_.Exception.Message)"
+        }
+                
 
         # 5. LLAMADA A LA API CON HEADERS DINÁMICOS
         Write-Host "Consultando API Proticketing..." -ForegroundColor Cyan
