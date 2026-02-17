@@ -113,7 +113,7 @@ function MiFuncionPrincipal {
             }
 
             # 7. GESTIÓN DE CSV Y NOVEDADES
-            $csvPath = "C:\temp\eventos_abonoteatro_proticketing.csv"
+            $csvPath = Join-Path $PSScriptRoot "eventos_abonoteatro_proticketing.csv"
             
             $eventosNuevos = @()
             if (Test-Path $csvPath) {
