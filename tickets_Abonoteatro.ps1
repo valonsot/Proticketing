@@ -38,30 +38,27 @@ function MiFuncionPrincipal {
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
         
         # 4. PASO 1: CARGAR WEB PRINCIPAL
-        Write-Host "Paso 1: Cargando página principal para obtener cookies..." -ForegroundColor Cyan
+        Write-Host "Cargando página principal..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlPagina)
         Start-Sleep -Seconds 15
 
-        # 5. PASO 2: NAVEGAR A LA API
-        Write-Host "Paso 2: Accediendo a la API a través del navegador..." -ForegroundColor Cyan
+        # 5. PASO 2: NAVEGAR A LA API DIRECTAMENTE
+        Write-Host "Consultando API a través del navegador..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlApi)
         Start-Sleep -Seconds 8
 
-        # --- EXTRACCIÓN ROBUSTA DE JSON ---
-        # Intentamos obtener el texto del body, quitando posibles etiquetas HTML si el navegador las añade
-        $rawText = $driver.FindElement([OpenQA.Selenium.By]::TagName("body")).Text
+        # Extraer el JSON del cuerpo de la página (más robusto que buscar <pre>)
+        $jsonRaw = $driver.FindElement([OpenQA.Selenium.By]::TagName("body")).Text
         
-        # Si el texto parece HTML (tiene <html> o <body>), es que no hemos cargado el JSON sino una página de error
-        if ($rawText -match "<html" -or $rawText -match "Forbidden" -or $rawText -match "Cloudflare") {
-            Write-Warning "¡Bloqueo detectado! No se recibió JSON. Título: $($driver.Title)"
+        if ($jsonRaw -match "Forbidden" -or $jsonRaw -match "Cloudflare") {
             $driver.GetScreenshot().SaveAsFile("error_debug.png")
-            throw "El servidor denegó el acceso (403) o pidió verificación humana."
+            throw "Bloqueo detectado por el servidor."
         }
 
-        $response = $rawText | ConvertFrom-Json
+        $response = $jsonRaw | ConvertFrom-Json
 
         if ($response.data) {
-            Write-Host "¡Acceso concedido! Procesando eventos..." -ForegroundColor Green
+            Write-Host "¡Datos recibidos! Procesando..." -ForegroundColor Green
             $listaEventos = foreach ($e in $response.data) {
                 [PSCustomObject]@{
                     Nombre  = $e.name.Trim()
@@ -71,22 +68,30 @@ function MiFuncionPrincipal {
                 }
             }
 
-            # COMPARACIÓN CSV
+            # 6. GESTIÓN DEL ARCHIVO CSV EN EL REPOSITORIO
             $csvPath = Join-Path $PSScriptRoot $nombreCsv
             $eventosNuevos = @()
+
             if (Test-Path $csvPath) {
+                Write-Host "Comparando con el archivo del repositorio..." -ForegroundColor Gray
+                # Leemos el archivo que ya tienes (usando ; como separador)
                 $anteriores = (Import-Csv $csvPath -Delimiter ";").Nombre
                 $eventosNuevos = $listaEventos | Where-Object { $_.Nombre -notin $anteriores }
             } else {
                 $eventosNuevos = $listaEventos
             }
 
+            # SOBREESCRIBIMOS EL ARCHIVO con toda la información nueva
+            # Esto es lo que luego el archivo .yml subirá a GitHub
             $listaEventos | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Delimiter ";"
+            Write-Host "Archivo CSV actualizado localmente." -ForegroundColor Green
 
-            # TELEGRAM
+            # 7. TELEGRAM (Solo si hay novedades)
             if ($eventosNuevos.Count -gt 0) {
+                Write-Host "Enviando $($eventosNuevos.Count) novedades a Telegram..." -ForegroundColor Magenta
                 $token = $env:TELEGRAM_TOKEN
-                $chatIds = Get-Content (Join-Path $PSScriptRoot "usuarios_telegram.txt") | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
+                $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
+                $chatIds = Get-Content $userFile | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
                 
                 foreach ($ev in $eventosNuevos) {
                     $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$(Escape-Html $ev.Nombre)</b>`n📍 $(Escape-Html $ev.Recinto)`n💰 $($ev.Precio)"
@@ -101,10 +106,7 @@ function MiFuncionPrincipal {
     }
     catch { 
         Write-Error "Fallo: $($_.Exception.Message)" 
-        if ($null -ne $driver) {
-            Write-Host "Guardando captura de pantalla de emergencia..." -ForegroundColor Magenta
-            $driver.GetScreenshot().SaveAsFile("error_debug.png")
-        }
+        if ($null -ne $driver) { $driver.GetScreenshot().SaveAsFile("error_debug.png") }
     }
     finally { 
         if ($null -ne $driver) { $driver.Quit() } 
