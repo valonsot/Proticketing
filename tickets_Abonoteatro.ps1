@@ -16,85 +16,49 @@ function MiFuncionPrincipal {
     try {
         # 1. CARGAR SELENIUM
         if (-not (Get-Module -ListAvailable Selenium)) {
-            Write-Host "Instalando Selenium..." -ForegroundColor Cyan
             Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
         }
         $module = Get-Module -ListAvailable Selenium | Select-Object -First 1
-        $dllPath = Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName
-        Add-Type -Path $dllPath
+        Add-Type -Path (Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName)
 
-        # 2. CONFIGURACIÓN CHROME (MODO EVASIÓN)
+        # 2. CONFIGURACIÓN CHROME "HUMANO"
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-        
-        # Argumentos estándar
         $options.AddArgument("--headless=new") 
         $options.AddArgument("--no-sandbox")
         $options.AddArgument("--disable-dev-shm-usage")
         $options.AddArgument("--window-size=1920,1080")
-        
-        # --- TÉCNICAS ANTI-DETECCIÓN ---
-        # 1. Ocultar que es un bot a nivel de navegador
         $options.AddArgument("--disable-blink-features=AutomationControlled")
-        
-        # 2. Eliminar la bandera "Chrome is being controlled by automated software"
         $options.AddExcludedArgument("enable-automation")
-        
-        # 3. Desactivar extensiones de automatización (Usando propiedad, no método)
-        try { $options.UseAutomationExtension = $false } catch { }
-        
-        # 4. User Agent moderno y real
         $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         $options.AddArgument("--user-agent=$uAgent")
 
         # 3. INICIAR NAVEGADOR
         $rutaDriver = if ($env:CHROMEWEBDRIVER) { $env:CHROMEWEBDRIVER } else { $PSScriptRoot }
-        Write-Host "Iniciando navegador humanizado..." -ForegroundColor Cyan
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
         
-        # 4. TRUCO FINAL: Borrar la huella de Selenium en ejecución
-        $driver.ExecuteScript("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
-
-        Write-Host "Navegando a Proticketing..." -ForegroundColor Cyan
+        # 4. NAVEGAR A LA WEB PRINCIPAL (Para cookies)
+        Write-Host "Cargando página principal..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlPagina)
+        Start-Sleep -Seconds (Get-Random -Minimum 12 -Maximum 18)
+
+        # 5. PEDIR LA API DESDE EL NAVEGADOR (Evasión total del 403)
+        Write-Host "Consultando API a través del navegador..." -ForegroundColor Cyan
+        $driver.Navigate().GoToUrl($urlApi)
+        Start-Sleep -Seconds 5
+
+        # Extraer el contenido del JSON que muestra el navegador
+        $jsonRaw = $driver.FindElement([OpenQA.Selenium.By]::TagName("pre")).Text
         
-        # Espera larga y aleatoria (Cloudflare odia la velocidad constante)
-        $espera = Get-Random -Minimum 15 -Maximum 25
-        Write-Host "Esperando $espera segundos para simular lectura humana..." -ForegroundColor Yellow
-        Start-Sleep -Seconds $espera
-
-        # Verificación de bloqueo
-        Write-Host "Título de la página: $($driver.Title)" -ForegroundColor Gray
-        if ($driver.Title -match "Cloudflare" -or $driver.Title -match "Just a moment") {
-            Write-Warning "AVISO: Cloudflare ha presentado un desafío. La IP de GitHub podría estar marcada."
-            $driver.GetScreenshot().SaveAsFile((Join-Path $PSScriptRoot "bloqueo_detectado.png"))
+        if (-not $jsonRaw) {
+            # Si no hay etiqueta <pre>, intentamos capturar todo el body (algunas versiones de Chrome lo muestran así)
+            $jsonRaw = $driver.FindElement([OpenQA.Selenium.By]::TagName("body")).Text
         }
 
-        # 5. CAPTURA DE SESIÓN
-        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-        $session.UserAgent = $uAgent
-        foreach ($c in $driver.Manage().Cookies.AllCookies) {
-            $newCookie = New-Object System.Net.Cookie($c.Name, $c.Value, "/", ".oneboxtds.com")
-            $session.Cookies.Add($newCookie)
-        }
-        $driver.Quit()
-        $driver = $null
-
-        # 6. LLAMADA A LA API (Con Headers fingiendo ser el navegador)
-        Write-Host "Consultando API con identidad suplantada..." -ForegroundColor Cyan
-        $headers = @{ 
-            "Accept"          = "application/json, text/plain, */*"
-            "Referer"         = $urlPagina
-            "ob-channel-id"   = "553"
-            "ob-client"       = "channels"
-            "sec-ch-ua-mobile" = "?0"
-            "sec-ch-ua-platform" = '"Windows"'
-        }
-
-        $response = Invoke-RestMethod -Uri $urlApi -WebSession $session -Headers $headers
+        $response = $jsonRaw | ConvertFrom-Json
 
         if ($response.data) {
-            Write-Host "¡Acceso concedido! Procesando eventos..." -ForegroundColor Green
+            Write-Host "¡Acceso concedido! Procesando $($response.data.Count) eventos..." -ForegroundColor Green
             $listaEventos = foreach ($e in $response.data) {
                 [PSCustomObject]@{
                     Nombre  = $e.name.Trim()
@@ -119,7 +83,8 @@ function MiFuncionPrincipal {
             # TELEGRAM
             if ($eventosNuevos.Count -gt 0) {
                 $token = $env:TELEGRAM_TOKEN
-                $chatIds = Get-Content (Join-Path $PSScriptRoot "usuarios_telegram.txt") | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
+                $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
+                $chatIds = Get-Content $userFile | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
                 
                 foreach ($ev in $eventosNuevos) {
                     $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$(Escape-Html $ev.Nombre)</b>`n📍 $(Escape-Html $ev.Recinto)`n💰 $($ev.Precio)"
@@ -130,14 +95,21 @@ function MiFuncionPrincipal {
                     Start-Sleep -Milliseconds 500
                 }
             }
+        } else {
+            throw "La API no devolvió datos. Posible bloqueo."
         }
     }
     catch { 
         Write-Error "Fallo: $($_.Exception.Message)" 
-        if ($driver) { $driver.GetScreenshot().SaveAsFile((Join-Path $PSScriptRoot "error_debug.png")) }
+        if ($driver) {
+            $pathPng = Join-Path $env:GITHUB_WORKSPACE "error_debug.png"
+            Write-Host "Guardando captura de seguridad en: $pathPng" -ForegroundColor Magenta
+            $driver.GetScreenshot().SaveAsFile($pathPng)
+        }
     }
-    finally { if ($null -ne $driver) { $driver.Quit() } }
+    finally { 
+        if ($null -ne $driver) { $driver.Quit() } 
+    }
 }
 
-# Ejecutar
 MiFuncionPrincipal
