@@ -1,0 +1,43 @@
+name: Ejecutar Bot Abonoteatro
+
+# 1. CUÁNDO SE EJECUTA
+on:
+  schedule:
+    - cron: '*/15 * * * *' # Se ejecuta cada 15 minutos automáticamente
+  workflow_dispatch:      # Permite ejecutarlo a mano desde la pestaña "Actions" en GitHub
+
+jobs:
+  build:
+    runs-on: windows-latest # Windows es mejor para Selenium en GitHub Actions
+
+    permissions:
+      contents: write # Permiso para que el bot pueda guardar cambios en el CSV o borrar logs
+
+    steps:
+      # 2. DESCARGAR EL CÓDIGO DEL REPOSITORIO
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      # 3. INSTALAR MÓDULOS NECESARIOS (Selenium)
+      - name: Instalar Módulo Selenium
+        shell: pwsh
+        run: |
+          Install-Module -Name Selenium -Force -Scope CurrentUser
+
+      # 4. EJECUTAR EL SCRIPT DE POWERSHELL
+      - name: Ejecutar Script de Tickets
+        shell: pwsh
+        env:
+          # Mapeamos el secreto de GitHub a una variable que entienda PowerShell
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        run: |
+          ./tickets_Abonoteatro.ps1
+
+      # 5. GUARDAR CAMBIOS (Si el script modificó el CSV o borró logs)
+      - name: Sincronizar cambios con el repositorio
+        run: |
+          git config --global user.name 'GitHub Action Bot'
+          git config --global user.email 'action@github.com'
+          git add .
+          # Solo hace commit si hay algo nuevo que subir
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Logs y archivos de datos" && git push)
