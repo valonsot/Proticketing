@@ -41,7 +41,6 @@ jobs:
           name: debug-results
           path: |
             error_debug.png
-            eventos_abonoteatro_proticketing.csv
 
       # 6. GUARDAR CAMBIOS (CSV de eventos)
       - name: Sincronizar cambios con el repositorio
