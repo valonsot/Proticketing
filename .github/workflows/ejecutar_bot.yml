@@ -2,16 +2,16 @@ name: Ejecutar Bot Abonoteatro
 
 # 1. CUÁNDO SE EJECUTA
 on:
-  schedule:
-    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
+  #schedule:
+  #  - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
   workflow_dispatch:      # Permite ejecutarlo a mano desde la pestaña "Actions"
 
 jobs:
   build:
-    runs-on: windows-latest # Windows tiene Chrome y el Driver preinstalados
+    runs-on: windows-latest # Entorno Windows para Selenium en GitHub Actions
 
     permissions:
-      contents: write # Permiso obligatorio para guardar los cambios del CSV en el repo
+      contents: write # Permiso necesario para que el bot pueda guardar el CSV en el repositorio
 
     steps:
       # 2. DESCARGAR EL CÓDIGO
@@ -19,7 +19,6 @@ jobs:
         uses: actions/checkout@v4
 
       # 3. INSTALAR MÓDULO SELENIUM
-      # Lo instalamos aquí para que el entorno esté listo antes de lanzar el script
       - name: Instalar Módulo Selenium
         shell: pwsh
         run: |
@@ -34,12 +33,18 @@ jobs:
         run: |
           ./tickets_Abonoteatro.ps1
 
-      # 5. GUARDAR CAMBIOS (CSV y Logs)
-      # Esto hace que el bot "recuerde" los eventos que ya notificó
+      # 5. GUARDAR CAMBIOS (CSV de eventos)
+      # Este paso permite que el bot guarde qué eventos ya notificó y no los repita
       - name: Sincronizar cambios con el repositorio
         run: |
           git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
+          
+          # Añadimos los cambios producidos en el CSV
+          git add .
+          
+          # Solo hace commit y push si el archivo ha cambiado (hay eventos nuevos)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Actualizar lista de eventos conocidos" && git push)
           git add .
           # Solo hace commit si el CSV ha cambiado (hay eventos nuevos)
           git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Eventos detectados" && git push))
