@@ -20,6 +20,11 @@ function MiFuncionPrincipal {
 
         # 2. CONFIGURACIÓN CHROME (Headless obligatorio)
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
+        
+        # --- ESTA ES LA LÍNEA CLAVE PARA GITHUB ---
+        $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
+        # ------------------------------------------
+
         $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         $options.AddArgument("--headless=new") 
         $options.AddArgument("--no-sandbox")
@@ -27,7 +32,8 @@ function MiFuncionPrincipal {
         $options.AddArgument("--window-size=1920,1080")
         $options.AddArgument("--user-agent=$uAgent")
 
-        Write-Host "Iniciando navegador..." -ForegroundColor Cyan
+        Write-Host "Iniciando navegador con binario en: $($options.BinaryLocation)" -ForegroundColor Cyan
+        $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($options)
         # En GitHub no se pone ruta al driver, se detecta solo
         $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($options)
 
