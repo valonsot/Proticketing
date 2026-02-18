@@ -42,30 +42,37 @@ function MiFuncionPrincipal {
         # 4. CARGAR PÁGINA PRINCIPAL
         Write-Host "Paso 1: Cargando portal de Abonoteatro..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlPagina)
-        Start-Sleep -Seconds 20
+        Start-Sleep -Seconds 25 # Un poco más de tiempo para asegurar carga completa
 
-        # 5. EJECUTAR FETCH
-        Write-Host "Paso 2: Ejecutando petición interna (Fetch)..." -ForegroundColor Cyan
+        # 5. EJECUTAR FETCH CON HEADERS (Para evitar el BAD_REQUEST)
+        Write-Host "Paso 2: Ejecutando petición interna con Metadatos..." -ForegroundColor Cyan
         $jsScript = @"
             var done = arguments[arguments.length - 1];
-            fetch('$urlApi')
-                .then(response => response.json())
-                .then(data => done(JSON.stringify(data)))
-                .catch(error => done('ERROR: ' + error));
+            fetch('$urlApi', {
+                headers: {
+                    "ob-channel-id": "553",
+                    "ob-client": "channels",
+                    "ob-language": "es-ES",
+                    "Accept": "application/json, text/plain, */*"
+                }
+            })
+            .then(response => response.text()) // Leemos como texto primero para depurar si falla
+            .then(data => done(data))
+            .catch(error => done('ERROR: ' + error));
 "@
         $driver.Manage().Timeouts().AsynchronousJavaScript = [TimeSpan]::FromSeconds(30)
         $jsonRaw = $driver.ExecuteAsyncScript($jsScript)
 
+        # 6. PROCESAR RESULTADOS
         if ($jsonRaw -like "ERROR:*") {
             throw "Error en Fetch de JavaScript: $jsonRaw"
         }
 
-        # 6. PROCESAR RESULTADOS
         $response = $jsonRaw | ConvertFrom-Json
         
         if ($response -and $response.data) {
             $totalEventos = $response.data.Count
-            Write-Host "¡ÉXITO! Se han encontrado $totalEventos eventos en la API." -ForegroundColor Green
+            Write-Host "¡ÉXITO! Se han encontrado $totalEventos eventos." -ForegroundColor Green
             
             $listaEventos = foreach ($e in $response.data) {
                 [PSCustomObject]@{
@@ -83,20 +90,19 @@ function MiFuncionPrincipal {
             if (Test-Path $csvPath) {
                 $csvAnterior = Import-Csv $csvPath -Delimiter ";"
                 $anteriores = $csvAnterior.Nombre
-                Write-Host "Comparando con $($anteriores.Count) eventos guardados anteriormente." -ForegroundColor Gray
                 $eventosNuevos = $listaEventos | Where-Object { $_.Nombre -notin $anteriores }
             } else {
-                Write-Host "No se encontró CSV previo, se enviarán todos los eventos." -ForegroundColor Yellow
+                Write-Host "Primera ejecución, creando base de datos CSV." -ForegroundColor Yellow
                 $eventosNuevos = $listaEventos
             }
 
-            # SOBREESCRIBIR SIEMPRE EL CSV
-            Write-Host "Actualizando archivo: $nombreCsv" -ForegroundColor Cyan
+            # Actualizamos el CSV
             $listaEventos | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Delimiter ";"
+            Write-Host "Archivo CSV actualizado." -ForegroundColor Cyan
             
             # 8. TELEGRAM
             if ($eventosNuevos.Count -gt 0) {
-                Write-Host "ENVIANDO $($eventosNuevos.Count) NOVEDADES A TELEGRAM..." -ForegroundColor Magenta
+                Write-Host "Enviando $($eventosNuevos.Count) novedades..." -ForegroundColor Magenta
                 $token = $env:TELEGRAM_TOKEN
                 $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
                 $chatIds = Get-Content $userFile | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
@@ -107,21 +113,19 @@ function MiFuncionPrincipal {
                         $payload = @{ chat_id = $id; text = $msg; parse_mode = "HTML" } | ConvertTo-Json
                         try {
                             Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -ContentType "application/json" -Body $payload
-                        } catch {
-                            Write-Warning "No se pudo enviar mensaje a $id"
-                        }
+                        } catch {}
                     }
                     Start-Sleep -Milliseconds 500
                 }
             } else {
-                Write-Host "No hay eventos nuevos para enviar." -ForegroundColor Green
+                Write-Host "No hay eventos nuevos." -ForegroundColor Green
             }
         } else {
-            Write-Error "La API no devolvió datos válidos. El contenido recibido fue: $jsonRaw"
+            Write-Error "La API devolvió un error o está vacía: $jsonRaw"
         }
     }
     catch { 
-        Write-Error "Fallo en la ejecución: $($_.Exception.Message)" 
+        Write-Error "Fallo: $($_.Exception.Message)" 
         if ($null -ne $driver) { $driver.GetScreenshot().SaveAsFile("error_debug.png") }
     }
     finally { 
