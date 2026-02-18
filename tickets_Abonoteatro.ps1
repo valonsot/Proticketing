@@ -4,6 +4,19 @@
 $urlPagina = "https://tickets.oneboxtds.com/abonoteatro/events"
 $urlApi = "https://tickets.oneboxtds.com/channels-api/v1/catalog/events?limit=50&offset=0&sort=customOrder%3Aasc&onCarousel=false&channel=abonoteatro"
 
+# --- FUNCIÓN CUENTA ATRÁS ---
+function Iniciar-CuentaAtras {
+    param([int]$segundosTotales)
+    for ($i = $segundosTotales; $i -gt 0; $i--) {
+        $tiempo = New-TimeSpan -Seconds $i
+        $reloj = "{0:D2}:{1:D2}" -f $tiempo.Minutes, $tiempo.Seconds
+        Write-Host -NoNewline "`rEsperando para la próxima vuelta: $reloj " -ForegroundColor Gray
+        Start-Sleep -Seconds 1
+    }
+    Write-Host "`r" + (" " * 40) + "`r" -NoNewline
+}
+
+# --- FUNCIÓN PRINCIPAL ---
 function MiFuncionPrincipal {
     $driver = $null
     try {
@@ -13,17 +26,15 @@ function MiFuncionPrincipal {
             Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
         }
         
-        # Localizamos la DLL automáticamente en la carpeta del módulo instalado
         $module = Get-Module -ListAvailable Selenium | Select-Object -First 1
         $dllPath = Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName
         Add-Type -Path $dllPath
 
-        # 2. CONFIGURACIÓN CHROME (Headless obligatorio)
+        # 2. CONFIGURACIÓN CHROME
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         
-        # --- ESTA ES LA LÍNEA CLAVE PARA GITHUB ---
+        # Ruta del binario de Chrome en los servidores de GitHub
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-        # ------------------------------------------
 
         $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         $options.AddArgument("--headless=new") 
@@ -32,22 +43,18 @@ function MiFuncionPrincipal {
         $options.AddArgument("--window-size=1920,1080")
         $options.AddArgument("--user-agent=$uAgent")
 
-        Write-Host "Iniciando navegador..." -ForegroundColor Cyan
+        # 3. LOCALIZAR DRIVER CORRECTO
+        # GitHub ya tiene el driver que coincide con Chrome en $env:CHROMEWEBDRIVER
+        $rutaDriver = if ($env:CHROMEWEBDRIVER) { $env:CHROMEWEBDRIVER } else { $PSScriptRoot }
         
-        # GitHub nos da la ruta del driver correcto en la variable $env:ChromeWebDriver
-        # Si estamos en local y esa variable no existe, usamos la ruta por defecto (.)
-        $rutaDriver = if ($env:ChromeWebDriver) { $env:ChromeWebDriver } else { "." }
-        
-        Write-Host "Usando ChromeDriver desde: $rutaDriver" -ForegroundColor Gray
-        
-        # Pasamos la ruta del driver como primer argumento al constructor
+        Write-Host "Iniciando navegador con Driver en: $rutaDriver" -ForegroundColor Cyan
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
 
-        # 3. CAPTURA DE SESIÓN
+        # 4. CAPTURA DE SESIÓN
         $driver.Navigate().GoToUrl($urlPagina)
+        Write-Host "Esperando carga de página..." -ForegroundColor Yellow
         Start-Sleep -Seconds 12
         
-        # Intentar cerrar cookies si aparecen
         try {
             $boton = $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(., 'Aceptar')]"))
             $boton.Click()
@@ -61,11 +68,11 @@ function MiFuncionPrincipal {
             $session.Cookies.Add($newCookie)
         }
 
-        # Cerramos navegador rápido para no consumir recursos
+        # Cerramos navegador rápido
         $driver.Quit()
         $driver = $null
 
-        # 4. LLAMADA A LA API
+        # 5. LLAMADA A LA API
         Write-Host "Consultando API..." -ForegroundColor Cyan
         $headers = @{ "Accept" = "application/json"; "Referer" = $urlPagina; "ob-channel-id" = "553" }
         $response = Invoke-RestMethod -Uri $urlApi -WebSession $session -Headers $headers
@@ -80,7 +87,7 @@ function MiFuncionPrincipal {
                 }
             }
 
-            # 5. GESTIÓN DE DATOS (Rutas relativas al repositorio)
+            # 6. GESTIÓN DE DATOS (Relativo al repo)
             $csvPath = Join-Path $PSScriptRoot "eventos_anteriores.csv"
             $eventosNuevos = @()
 
@@ -91,11 +98,11 @@ function MiFuncionPrincipal {
                 $eventosNuevos = $listaEventos
             }
 
-            # Guardamos el estado actual
             $listaEventos | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Delimiter ";"
 
-            # 6. TELEGRAM
+            # 7. TELEGRAM
             if ($eventosNuevos.Count -gt 0) {
+                Write-Host "¡Encontrados $($eventosNuevos.Count) eventos nuevos!" -ForegroundColor Magenta
                 $token = $env:TELEGRAM_TOKEN
                 $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
                 
@@ -103,29 +110,33 @@ function MiFuncionPrincipal {
                     $ids = Get-Content $userFile | Where-Object { $_ -match '\d+' }
                     foreach ($ev in $eventosNuevos) {
                         foreach ($id in $ids) {
-                            $msg = "<b>NUEVO: $($ev.Nombre)</b>`n📍 $($ev.Recinto)`n💰 $($ev.Precio)"
+                            $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$($ev.Nombre)</b>`n📍 $($ev.Recinto)`n💰 $($ev.Precio)"
                             $body = @{ chat_id = $id; text = $msg; parse_mode = "HTML" }
                             Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -Body $body
                         }
                     }
                 }
+            } else {
+                Write-Host "Sin novedades." -ForegroundColor Gray
             }
         }
     }
     catch {
-        Write-Error "Error: $($_.Exception.Message)"
+        Write-Error "Error en la ejecución: $($_.Exception.Message)"
     }
     finally {
         if ($null -ne $driver) { $driver.Quit() }
     }
 }
 
-# --- BUCLE DE 5 VECES ---
+# --- EJECUCIÓN DEL BUCLE ---
 for ($i = 1; $i -le 5; $i++) {
     Write-Host "`n>>> EJECUCIÓN $i DE 5 <<<" -ForegroundColor Green
     MiFuncionPrincipal
+    
     if ($i -lt 5) { 
-        Write-Host "Esperando 2 min..." -ForegroundColor Gray
-        Start-Sleep -Seconds 120 
+        Iniciar-CuentaAtras -segundosTotales 120 
     }
 }
+
+Write-Host "`nCiclo completado. Saliendo para que GitHub finalice la tarea." -ForegroundColor Cyan
