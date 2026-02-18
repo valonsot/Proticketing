@@ -8,21 +8,27 @@ $urlApi = "https://tickets.oneboxtds.com/channels-api/v1/catalog/events?limit=50
 function Iniciar-CuentaAtras {
     param([int]$segundosTotales)
     for ($i = $segundosTotales; $i -gt 0; $i--) {
-        $tiempo = New-TimeSpan -Seconds $i
-        $reloj = "{0:D2}:{1:D2}" -f $tiempo.Minutes, $tiempo.Seconds
+        $reloj = "{0:D2}:{1:D2}" -f ([timespan]::FromSeconds($i).Minutes), ([timespan]::FromSeconds($i).Seconds)
         Write-Host -NoNewline "`rEsperando para la próxima vuelta: $reloj " -ForegroundColor Gray
         Start-Sleep -Seconds 1
     }
     Write-Host "`r" + (" " * 40) + "`r" -NoNewline
 }
 
+# --- FUNCIÓN PARA ESCAPAR HTML (Evita el error 400 de Telegram) ---
+function Escape-Html {
+    param([string]$texto)
+    if ($null -eq $texto) { return "" }
+    return $texto.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
+}
+
 # --- FUNCIÓN PRINCIPAL ---
 function MiFuncionPrincipal {
     $driver = $null
     try {
-        # 1. CARGAR SELENIUM (Dinámico para GitHub)
+        # 1. CARGAR SELENIUM
         if (-not (Get-Module -ListAvailable Selenium)) {
-            Write-Host "Instalando Selenium en el servidor de GitHub..." -ForegroundColor Cyan
+            Write-Host "Instalando Selenium..." -ForegroundColor Cyan
             Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
         }
         
@@ -32,10 +38,7 @@ function MiFuncionPrincipal {
 
         # 2. CONFIGURACIÓN CHROME
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
-        
-        # Ruta del binario de Chrome en los servidores de GitHub
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-
         $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         $options.AddArgument("--headless=new") 
         $options.AddArgument("--no-sandbox")
@@ -43,16 +46,13 @@ function MiFuncionPrincipal {
         $options.AddArgument("--window-size=1920,1080")
         $options.AddArgument("--user-agent=$uAgent")
 
-        # 3. LOCALIZAR DRIVER CORRECTO
-        # GitHub ya tiene el driver que coincide con Chrome en $env:CHROMEWEBDRIVER
+        # 3. INICIAR NAVEGADOR
         $rutaDriver = if ($env:CHROMEWEBDRIVER) { $env:CHROMEWEBDRIVER } else { $PSScriptRoot }
-        
-        Write-Host "Iniciando navegador con Driver en: $rutaDriver" -ForegroundColor Cyan
+        Write-Host "Iniciando navegador..." -ForegroundColor Cyan
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
 
         # 4. CAPTURA DE SESIÓN
         $driver.Navigate().GoToUrl($urlPagina)
-        Write-Host "Esperando carga de página..." -ForegroundColor Yellow
         Start-Sleep -Seconds 12
         
         try {
@@ -68,7 +68,6 @@ function MiFuncionPrincipal {
             $session.Cookies.Add($newCookie)
         }
 
-        # Cerramos navegador rápido
         $driver.Quit()
         $driver = $null
 
@@ -87,7 +86,7 @@ function MiFuncionPrincipal {
                 }
             }
 
-            # 6. GESTIÓN DE DATOS (Relativo al repo)
+            # 6. GESTIÓN DE DATOS
             $csvPath = Join-Path $PSScriptRoot "eventos_anteriores.csv"
             $eventosNuevos = @()
 
@@ -100,20 +99,41 @@ function MiFuncionPrincipal {
 
             $listaEventos | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Delimiter ";"
 
-            # 7. TELEGRAM
+            # 7. TELEGRAM (Corregido para evitar Error 400)
             if ($eventosNuevos.Count -gt 0) {
                 Write-Host "¡Encontrados $($eventosNuevos.Count) eventos nuevos!" -ForegroundColor Magenta
                 $token = $env:TELEGRAM_TOKEN
                 $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
                 
                 if (Test-Path $userFile) {
-                    $ids = Get-Content $userFile | Where-Object { $_ -match '\d+' }
+                    $ids = Get-Content $userFile | Where-Object { $_ -match '\d+' } | ForEach-Object { $_.Trim() }
+                    
                     foreach ($ev in $eventosNuevos) {
+                        # Escapamos caracteres especiales para que Telegram no de error 400
+                        $nombreEscapado = Escape-Html $ev.Nombre
+                        $recintoEscapado = Escape-Html $ev.Recinto
+
                         foreach ($id in $ids) {
-                            $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$($ev.Nombre)</b>`n📍 $($ev.Recinto)`n💰 $($ev.Precio)"
-                            $body = @{ chat_id = $id; text = $msg; parse_mode = "HTML" }
-                            Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -Body $body
+                            $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$nombreEscapado</b>`n📍 $recintoEscapado`n💰 $($ev.Precio)"
+                            
+                            $payload = @{
+                                chat_id    = $id
+                                text       = $msg
+                                parse_mode = "HTML"
+                            } | ConvertTo-Json
+
+                            try {
+                                Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" `
+                                                  -Method Post `
+                                                  -ContentType "application/json; charset=utf-8" `
+                                                  -Body $payload
+                                Write-Host "Notificación enviada a $id" -ForegroundColor Gray
+                            } catch {
+                                Write-Warning "Error enviando a $id : $($_.Exception.Message)"
+                            }
                         }
+                        # Pequeña pausa para no saturar a Telegram (antispam)
+                        Start-Sleep -Milliseconds 500
                     }
                 }
             } else {
@@ -129,14 +149,9 @@ function MiFuncionPrincipal {
     }
 }
 
-# --- EJECUCIÓN DEL BUCLE ---
+# --- BUCLE DE 5 VECES ---
 for ($i = 1; $i -le 5; $i++) {
     Write-Host "`n>>> EJECUCIÓN $i DE 5 <<<" -ForegroundColor Green
     MiFuncionPrincipal
-    
-    if ($i -lt 5) { 
-        Iniciar-CuentaAtras -segundosTotales 120 
-    }
+    if ($i -lt 5) { Iniciar-CuentaAtras -segundosTotales 120 }
 }
-
-Write-Host "`nCiclo completado. Saliendo para que GitHub finalice la tarea." -ForegroundColor Cyan
