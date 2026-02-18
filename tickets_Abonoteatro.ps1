@@ -21,7 +21,7 @@ function MiFuncionPrincipal {
         $module = Get-Module -ListAvailable Selenium | Select-Object -First 1
         Add-Type -Path (Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName)
 
-        # 2. CONFIGURACIÓN CHROME
+        # 2. CONFIGURACIÓN CHROME ULTRA-HUMANO
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
         $options.AddArgument("--headless=new") 
@@ -37,28 +37,36 @@ function MiFuncionPrincipal {
         $rutaDriver = if ($env:CHROMEWEBDRIVER) { $env:CHROMEWEBDRIVER } else { $PSScriptRoot }
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
         
-        # 4. PASO 1: CARGAR WEB PRINCIPAL
-        Write-Host "Cargando página principal..." -ForegroundColor Cyan
+        # 4. CARGAR PÁGINA PRINCIPAL (OBLIGATORIO)
+        Write-Host "Paso 1: Cargando portal de Abonoteatro..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlPagina)
-        Start-Sleep -Seconds 15
+        Start-Sleep -Seconds 20 # Tiempo para que Cloudflare nos deje pasar
 
-        # 5. PASO 2: NAVEGAR A LA API DIRECTAMENTE
-        Write-Host "Consultando API a través del navegador..." -ForegroundColor Cyan
-        $driver.Navigate().GoToUrl($urlApi)
-        Start-Sleep -Seconds 8
-
-        # Extraer el JSON del cuerpo de la página (más robusto que buscar <pre>)
-        $jsonRaw = $driver.FindElement([OpenQA.Selenium.By]::TagName("body")).Text
+        # 5. TÉCNICA MAESTRA: Pedir el JSON mediante JavaScript (Fetch)
+        # Esto evita navegar a la URL de la API y que nos bloqueen por "petición directa"
+        Write-Host "Paso 2: Ejecutando petición interna (Fetch)..." -ForegroundColor Cyan
         
-        if ($jsonRaw -match "Forbidden" -or $jsonRaw -match "Cloudflare") {
-            $driver.GetScreenshot().SaveAsFile("error_debug.png")
-            throw "Bloqueo detectado por el servidor."
+        $jsScript = @"
+            var done = arguments[arguments.length - 1];
+            fetch('$urlApi')
+                .then(response => response.json())
+                .then(data => done(JSON.stringify(data)))
+                .catch(error => done('ERROR: ' + error));
+"@
+        
+        # Ejecutamos de forma asíncrona para esperar la respuesta de la red
+        $driver.Manage().Timeouts().AsynchronousJavaScript = [TimeSpan]::FromSeconds(30)
+        $jsonRaw = $driver.ExecuteAsyncScript($jsScript)
+
+        if ($jsonRaw -like "ERROR:*") {
+            $driver.GetScreenshot().SaveAsFile("bloqueo_detectado.png")
+            throw "El servidor bloqueó la petición interna: $jsonRaw"
         }
 
         $response = $jsonRaw | ConvertFrom-Json
 
         if ($response.data) {
-            Write-Host "¡Datos recibidos! Procesando..." -ForegroundColor Green
+            Write-Host "¡Datos obtenidos con éxito!" -ForegroundColor Green
             $listaEventos = foreach ($e in $response.data) {
                 [PSCustomObject]@{
                     Nombre  = $e.name.Trim()
@@ -68,30 +76,25 @@ function MiFuncionPrincipal {
                 }
             }
 
-            # 6. GESTIÓN DEL ARCHIVO CSV EN EL REPOSITORIO
+            # 6. GESTIÓN DEL CSV EN EL REPOSITORIO
             $csvPath = Join-Path $PSScriptRoot $nombreCsv
             $eventosNuevos = @()
 
             if (Test-Path $csvPath) {
-                Write-Host "Comparando con el archivo del repositorio..." -ForegroundColor Gray
-                # Leemos el archivo que ya tienes (usando ; como separador)
                 $anteriores = (Import-Csv $csvPath -Delimiter ";").Nombre
                 $eventosNuevos = $listaEventos | Where-Object { $_.Nombre -notin $anteriores }
             } else {
                 $eventosNuevos = $listaEventos
             }
 
-            # SOBREESCRIBIMOS EL ARCHIVO con toda la información nueva
-            # Esto es lo que luego el archivo .yml subirá a GitHub
+            # Sobreescribir CSV
             $listaEventos | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Delimiter ";"
-            Write-Host "Archivo CSV actualizado localmente." -ForegroundColor Green
 
-            # 7. TELEGRAM (Solo si hay novedades)
+            # 7. TELEGRAM
             if ($eventosNuevos.Count -gt 0) {
-                Write-Host "Enviando $($eventosNuevos.Count) novedades a Telegram..." -ForegroundColor Magenta
+                Write-Host "Enviando $($eventosNuevos.Count) novedades..." -ForegroundColor Magenta
                 $token = $env:TELEGRAM_TOKEN
-                $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
-                $chatIds = Get-Content $userFile | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
+                $chatIds = Get-Content (Join-Path $PSScriptRoot "usuarios_telegram.txt") | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
                 
                 foreach ($ev in $eventosNuevos) {
                     $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$(Escape-Html $ev.Nombre)</b>`n📍 $(Escape-Html $ev.Recinto)`n💰 $($ev.Precio)"
@@ -108,9 +111,10 @@ function MiFuncionPrincipal {
         Write-Error "Fallo: $($_.Exception.Message)" 
         if ($null -ne $driver) { $driver.GetScreenshot().SaveAsFile("error_debug.png") }
     }
-    finally { 
-        if ($null -ne $driver) { $driver.Quit() } 
-    }
+    finally { if ($null -ne $driver) { $driver.Quit() } }
+}
+
+MiFuncionPrincipal
 }
 
 MiFuncionPrincipal
