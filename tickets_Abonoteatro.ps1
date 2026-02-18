@@ -16,12 +16,13 @@ function MiFuncionPrincipal {
     try {
         # 1. CARGAR SELENIUM
         if (-not (Get-Module -ListAvailable Selenium)) {
+            Write-Host "Instalando Selenium..." -ForegroundColor Cyan
             Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
         }
         $module = Get-Module -ListAvailable Selenium | Select-Object -First 1
         Add-Type -Path (Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName)
 
-        # 2. CONFIGURACIÓN CHROME ULTRA-HUMANO
+        # 2. CONFIGURACIÓN CHROME
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
         $options.AddArgument("--headless=new") 
@@ -35,17 +36,16 @@ function MiFuncionPrincipal {
 
         # 3. INICIAR NAVEGADOR
         $rutaDriver = if ($env:CHROMEWEBDRIVER) { $env:CHROMEWEBDRIVER } else { $PSScriptRoot }
+        Write-Host "Iniciando navegador..." -ForegroundColor Cyan
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
         
-        # 4. CARGAR PÁGINA PRINCIPAL (OBLIGATORIO)
+        # 4. CARGAR PÁGINA PRINCIPAL
         Write-Host "Paso 1: Cargando portal de Abonoteatro..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlPagina)
-        Start-Sleep -Seconds 20 # Tiempo para que Cloudflare nos deje pasar
+        Start-Sleep -Seconds 20
 
-        # 5. TÉCNICA MAESTRA: Pedir el JSON mediante JavaScript (Fetch)
-        # Esto evita navegar a la URL de la API y que nos bloqueen por "petición directa"
+        # 5. EJECUTAR FETCH
         Write-Host "Paso 2: Ejecutando petición interna (Fetch)..." -ForegroundColor Cyan
-        
         $jsScript = @"
             var done = arguments[arguments.length - 1];
             fetch('$urlApi')
@@ -53,20 +53,20 @@ function MiFuncionPrincipal {
                 .then(data => done(JSON.stringify(data)))
                 .catch(error => done('ERROR: ' + error));
 "@
-        
-        # Ejecutamos de forma asíncrona para esperar la respuesta de la red
         $driver.Manage().Timeouts().AsynchronousJavaScript = [TimeSpan]::FromSeconds(30)
         $jsonRaw = $driver.ExecuteAsyncScript($jsScript)
 
         if ($jsonRaw -like "ERROR:*") {
-            $driver.GetScreenshot().SaveAsFile("bloqueo_detectado.png")
-            throw "El servidor bloqueó la petición interna: $jsonRaw"
+            throw "Error en Fetch de JavaScript: $jsonRaw"
         }
 
+        # 6. PROCESAR RESULTADOS
         $response = $jsonRaw | ConvertFrom-Json
-
-        if ($response.data) {
-            Write-Host "¡Datos obtenidos con éxito!" -ForegroundColor Green
+        
+        if ($response -and $response.data) {
+            $totalEventos = $response.data.Count
+            Write-Host "¡ÉXITO! Se han encontrado $totalEventos eventos en la API." -ForegroundColor Green
+            
             $listaEventos = foreach ($e in $response.data) {
                 [PSCustomObject]@{
                     Nombre  = $e.name.Trim()
@@ -76,43 +76,58 @@ function MiFuncionPrincipal {
                 }
             }
 
-            # 6. GESTIÓN DEL CSV EN EL REPOSITORIO
+            # 7. GESTIÓN DEL CSV
             $csvPath = Join-Path $PSScriptRoot $nombreCsv
             $eventosNuevos = @()
 
             if (Test-Path $csvPath) {
-                $anteriores = (Import-Csv $csvPath -Delimiter ";").Nombre
+                $csvAnterior = Import-Csv $csvPath -Delimiter ";"
+                $anteriores = $csvAnterior.Nombre
+                Write-Host "Comparando con $($anteriores.Count) eventos guardados anteriormente." -ForegroundColor Gray
                 $eventosNuevos = $listaEventos | Where-Object { $_.Nombre -notin $anteriores }
             } else {
+                Write-Host "No se encontró CSV previo, se enviarán todos los eventos." -ForegroundColor Yellow
                 $eventosNuevos = $listaEventos
             }
 
-            # Sobreescribir CSV
+            # SOBREESCRIBIR SIEMPRE EL CSV
+            Write-Host "Actualizando archivo: $nombreCsv" -ForegroundColor Cyan
             $listaEventos | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Delimiter ";"
-
-            # 7. TELEGRAM
+            
+            # 8. TELEGRAM
             if ($eventosNuevos.Count -gt 0) {
-                Write-Host "Enviando $($eventosNuevos.Count) novedades..." -ForegroundColor Magenta
+                Write-Host "ENVIANDO $($eventosNuevos.Count) NOVEDADES A TELEGRAM..." -ForegroundColor Magenta
                 $token = $env:TELEGRAM_TOKEN
-                $chatIds = Get-Content (Join-Path $PSScriptRoot "usuarios_telegram.txt") | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
+                $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
+                $chatIds = Get-Content $userFile | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
                 
                 foreach ($ev in $eventosNuevos) {
                     $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$(Escape-Html $ev.Nombre)</b>`n📍 $(Escape-Html $ev.Recinto)`n💰 $($ev.Precio)"
                     foreach ($id in $chatIds) {
                         $payload = @{ chat_id = $id; text = $msg; parse_mode = "HTML" } | ConvertTo-Json
-                        try { Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -ContentType "application/json" -Body $payload } catch {}
+                        try {
+                            Invoke-RestMethod -Uri "https://api.telegram.org/bot$token/sendMessage" -Method Post -ContentType "application/json" -Body $payload
+                        } catch {
+                            Write-Warning "No se pudo enviar mensaje a $id"
+                        }
                     }
                     Start-Sleep -Milliseconds 500
                 }
+            } else {
+                Write-Host "No hay eventos nuevos para enviar." -ForegroundColor Green
             }
+        } else {
+            Write-Error "La API no devolvió datos válidos. El contenido recibido fue: $jsonRaw"
         }
     }
     catch { 
-        Write-Error "Fallo: $($_.Exception.Message)" 
+        Write-Error "Fallo en la ejecución: $($_.Exception.Message)" 
         if ($null -ne $driver) { $driver.GetScreenshot().SaveAsFile("error_debug.png") }
     }
-    finally { if ($null -ne $driver) { $driver.Quit() } }
+    finally { 
+        if ($null -ne $driver) { $driver.Quit() }
+        Write-Host "--- SCRIPT FINALIZADO ---" -ForegroundColor Cyan
+    }
 }
 
 MiFuncionPrincipal
-
