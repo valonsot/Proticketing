@@ -16,51 +16,61 @@ function MiFuncionPrincipal {
     try {
         # 1. CARGAR SELENIUM
         if (-not (Get-Module -ListAvailable Selenium)) {
+            Write-Host "Instalando Selenium..." -ForegroundColor Cyan
             Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
         }
         $module = Get-Module -ListAvailable Selenium | Select-Object -First 1
-        Add-Type -Path (Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName)
+        $dllPath = Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+        Add-Type -Path $dllPath
 
-        # 2. CONFIGURACIÓN CHROME "HUMANIZADO"
+        # 2. CONFIGURACIÓN CHROME (MODO EVASIÓN)
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
         
-        # Argumentos de evasión
+        # Argumentos estándar
         $options.AddArgument("--headless=new") 
         $options.AddArgument("--no-sandbox")
         $options.AddArgument("--disable-dev-shm-usage")
         $options.AddArgument("--window-size=1920,1080")
         
-        # Engañar a Cloudflare: Ocultar que es un bot
+        # --- TÉCNICAS ANTI-DETECCIÓN ---
+        # 1. Ocultar que es un bot a nivel de navegador
         $options.AddArgument("--disable-blink-features=AutomationControlled")
-        $options.AddExcludedArgument("enable-automation")
-        $options.AddAdditionalOption("useAutomationExtension", $false)
         
+        # 2. Eliminar la bandera "Chrome is being controlled by automated software"
+        $options.AddExcludedArgument("enable-automation")
+        
+        # 3. Desactivar extensiones de automatización (Usando propiedad, no método)
+        try { $options.UseAutomationExtension = $false } catch { }
+        
+        # 4. User Agent moderno y real
         $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36"
         $options.AddArgument("--user-agent=$uAgent")
 
         # 3. INICIAR NAVEGADOR
         $rutaDriver = if ($env:CHROMEWEBDRIVER) { $env:CHROMEWEBDRIVER } else { $PSScriptRoot }
+        Write-Host "Iniciando navegador humanizado..." -ForegroundColor Cyan
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
         
-        # Ejecutar script para borrar rastros de Selenium
+        # 4. TRUCO FINAL: Borrar la huella de Selenium en ejecución
         $driver.ExecuteScript("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
 
         Write-Host "Navegando a Proticketing..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlPagina)
         
-        # Espera aleatoria para parecer humano
-        Start-Sleep -Seconds (Get-Random -Minimum 15 -Maximum 25)
+        # Espera larga y aleatoria (Cloudflare odia la velocidad constante)
+        $espera = Get-Random -Minimum 15 -Maximum 25
+        Write-Host "Esperando $espera segundos para simular lectura humana..." -ForegroundColor Yellow
+        Start-Sleep -Seconds $espera
 
-        # DEBUG: ¿Qué está viendo el bot?
-        Write-Host "Título de la página: $($driver.Title)" -ForegroundColor Yellow
+        # Verificación de bloqueo
+        Write-Host "Título de la página: $($driver.Title)" -ForegroundColor Gray
         if ($driver.Title -match "Cloudflare" -or $driver.Title -match "Just a moment") {
-            Write-Error "BLOQUEO DETECTADO: Cloudflare está desafiando la conexión."
-            $driver.GetScreenshot().SaveAsFile((Join-Path $PSScriptRoot "bloqueo_cloudflare.png"))
-            return
+            Write-Warning "AVISO: Cloudflare ha presentado un desafío. La IP de GitHub podría estar marcada."
+            $driver.GetScreenshot().SaveAsFile((Join-Path $PSScriptRoot "bloqueo_detectado.png"))
         }
 
-        # 4. CAPTURA DE SESIÓN
+        # 5. CAPTURA DE SESIÓN
         $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
         $session.UserAgent = $uAgent
         foreach ($c in $driver.Manage().Cookies.AllCookies) {
@@ -70,24 +80,21 @@ function MiFuncionPrincipal {
         $driver.Quit()
         $driver = $null
 
-        # 5. LLAMADA A LA API (Con Headers más realistas)
-        Write-Host "Consultando API con sesión capturada..." -ForegroundColor Cyan
+        # 6. LLAMADA A LA API (Con Headers fingiendo ser el navegador)
+        Write-Host "Consultando API con identidad suplantada..." -ForegroundColor Cyan
         $headers = @{ 
             "Accept"          = "application/json, text/plain, */*"
-            "Accept-Language" = "es-ES,es;q=0.9"
             "Referer"         = $urlPagina
             "ob-channel-id"   = "553"
             "ob-client"       = "channels"
-            "Origin"          = "https://tickets.oneboxtds.com"
-            "Sec-Fetch-Dest"  = "empty"
-            "Sec-Fetch-Mode"  = "cors"
-            "Sec-Fetch-Site"  = "same-origin"
+            "sec-ch-ua-mobile" = "?0"
+            "sec-ch-ua-platform" = '"Windows"'
         }
 
         $response = Invoke-RestMethod -Uri $urlApi -WebSession $session -Headers $headers
 
         if ($response.data) {
-            Write-Host "API respondió correctamente." -ForegroundColor Green
+            Write-Host "¡Acceso concedido! Procesando eventos..." -ForegroundColor Green
             $listaEventos = foreach ($e in $response.data) {
                 [PSCustomObject]@{
                     Nombre  = $e.name.Trim()
@@ -132,5 +139,5 @@ function MiFuncionPrincipal {
     finally { if ($null -ne $driver) { $driver.Quit() } }
 }
 
-# Ejecutar una vez para probar (en GitHub Actions no abusar de bucles si hay bloqueos)
+# Ejecutar
 MiFuncionPrincipal
