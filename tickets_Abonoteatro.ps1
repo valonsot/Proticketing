@@ -32,10 +32,16 @@ function MiFuncionPrincipal {
         $options.AddArgument("--window-size=1920,1080")
         $options.AddArgument("--user-agent=$uAgent")
 
-        Write-Host "Iniciando navegador con binario en: $($options.BinaryLocation)" -ForegroundColor Cyan
-        $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($options)
-        # En GitHub no se pone ruta al driver, se detecta solo
-        $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($options)
+        Write-Host "Iniciando navegador..." -ForegroundColor Cyan
+        
+        # GitHub nos da la ruta del driver correcto en la variable $env:ChromeWebDriver
+        # Si estamos en local y esa variable no existe, usamos la ruta por defecto (.)
+        $rutaDriver = if ($env:ChromeWebDriver) { $env:ChromeWebDriver } else { "." }
+        
+        Write-Host "Usando ChromeDriver desde: $rutaDriver" -ForegroundColor Gray
+        
+        # Pasamos la ruta del driver como primer argumento al constructor
+        $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
 
         # 3. CAPTURA DE SESIÓN
         $driver.Navigate().GoToUrl($urlPagina)
