@@ -1,63 +1,48 @@
 name: Ejecutar Bot Abonoteatro
 
-# 1. CUÁNDO SE EJECUTA
 on:
-  #schedule:
-  #  - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
-  workflow_dispatch:      # Permite ejecutarlo a mano desde la pestaña "Actions"
+  # schedule:
+  #  - cron: '0 * * * *' # Se ejecuta cada hora
+  workflow_dispatch:      # Permite darle al botón "Run" a mano
 
 jobs:
   build:
-    runs-on: windows-latest # Entorno Windows para Selenium en GitHub Actions
+    runs-on: windows-latest
 
     permissions:
-      contents: write # Permiso necesario para que el bot pueda guardar el CSV en el repositorio
+      contents: write # PERMISO CRÍTICO para poder modificar el archivo CSV en el repo
 
     steps:
-      # 2. DESCARGAR EL CÓDIGO
       - name: Checkout del código
         uses: actions/checkout@v4
 
-      # 3. INSTALAR MÓDULO SELENIUM
       - name: Instalar Módulo Selenium
         shell: pwsh
         run: |
           Install-Module -Name Selenium -Force -Scope CurrentUser
 
-      # 4. EJECUTAR EL SCRIPT DE POWERSHELL
       - name: Ejecutar Script de Tickets
         shell: pwsh
         env:
-          # Pasamos el Token de Telegram desde los Secrets de GitHub
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         run: |
           ./tickets_Abonoteatro.ps1
 
-      # 5. SACO PANTALLA DE ERROR
-      - name: Subir captura de error si falla
-        uses: actions/upload-artifact@v4
-        if: always() # Cambiado a 'always' para que siempre intentes ver qué pasó
-        with:
-          name: debug-results
-          path: |
-            error_debug.png
-
-      # 6. GUARDAR CAMBIOS (CSV de eventos)
-      - name: Sincronizar cambios con el repositorio
+      - name: Guardar cambios en el repositorio
         shell: pwsh
         run: |
           git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
           
-          # Agregamos el archivo CSV específicamente
+          # Añadimos el archivo CSV que el script ha modificado
           git add eventos_abonoteatro_proticketing.csv
           
-          # Comprobamos si hay cambios reales en el "stage" de git
-          $cambios = git status --porcelain
-          if ($cambios) {
-              Write-Host "Cambios detectados en el CSV. Realizando commit..."
-              git commit -m "Auto-update: Actualizar lista de eventos conocidos"
+          # Comprobamos si hay cambios reales para subir
+          $status = git status --porcelain
+          if ($status) {
+              Write-Host "Guardando cambios en el repositorio..."
+              git commit -m "Auto-update: Actualizar eventos_abonoteatro_proticketing.csv"
               git push
           } else {
-              Write-Host "No hay cambios nuevos para guardar."
+              Write-Host "No hay cambios que guardar."
           }
