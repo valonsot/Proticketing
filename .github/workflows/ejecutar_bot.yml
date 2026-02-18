@@ -14,6 +14,21 @@ jobs:
       contents: write # Permiso para que el bot pueda guardar cambios en el CSV o borrar logs
 
     steps:
+      - name: Descargar código
+        uses: actions/checkout@v4
+
+      # ESTE PASO ASEGURA QUE TENGAS EL DRIVER CORRECTO
+      - name: Instalar Chrome Driver oficial
+        uses: cesar-rodriguez/setup-chromedriver@v1
+
+      - name: Ejecutar Bot
+        shell: pwsh
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        run: |
+          ./tickets_Abonoteatro.ps1
+      
+      
       # 2. DESCARGAR EL CÓDIGO DEL REPOSITORIO
       - name: Checkout del código
         uses: actions/checkout@v4
