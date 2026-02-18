@@ -1,202 +1,136 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# 1. Rutas y Variables
-$nugetFolder = "C:\powershell\SeleniumFiles"
-$dllPath = "$nugetFolder\lib\webdrivernetstandard2.0\WebDriver.dll"
-$driverPath = "$nugetFolder\manager\windows"
-
+# ==========================================
+# 1. VARIABLES GLOBALES
+# ==========================================
 $urlPagina = "https://tickets.oneboxtds.com/abonoteatro/events"
-# URL CORREGIDA: Traemos eventos reales (onCarousel=false) y límite de 50
 $urlApi = "https://tickets.oneboxtds.com/channels-api/v1/catalog/events?limit=50&offset=0&sort=customOrder%3Aasc&onCarousel=false&channel=abonoteatro"
 
-Add-Type -Path $dllPath
+# ==========================================
+# 2. FUNCIÓN CUENTA ATRÁS
+# ==========================================
+function Iniciar-CuentaAtras {
+    param([int]$segundosTotales)
+    for ($i = $segundosTotales; $i -gt 0; $i--) {
+        $tiempo = New-TimeSpan -Seconds $i
+        $reloj = "{0:D2}:{1:D2}" -f $tiempo.Minutes, $tiempo.Seconds
+        Write-Host -NoNewline "`rEsperando para la próxima vuelta: $reloj " -ForegroundColor Gray
+        Start-Sleep -Seconds 1
+    }
+    Write-Host "`r" + (" " * 40) + "`r" -NoNewline
+}
 
-
+# ==========================================
+# 3. FUNCIÓN PRINCIPAL
+# ==========================================
 function MiFuncionPrincipal {
-           # 1. INSTALAR Y CARGAR LIBRERÍAS (Solución para GitHub)
+    $driver = $null
+    try {
+        # Instalar Selenium si no existe
         if (-not (Get-Module -ListAvailable Selenium)) {
             Write-Host "Instalando módulo Selenium..." -ForegroundColor Cyan
             Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
         }
         
-        # Localizar el DLL de Selenium dentro del módulo instalado para cargarlo en memoria
         $modulePath = (Get-Module -ListAvailable Selenium).ModuleBase[0]
         $dllPath = Get-ChildItem -Path $modulePath -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName
         Add-Type -Path $dllPath
         
-        # 2. CONFIGURACIÓN DE CHROME
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         $uAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        
         $options.AddArgument("--window-size=1920,1080")
         $options.AddArgument("--user-agent=$uAgent")
-        
-        # EN GITHUB ES OBLIGATORIO EL MODO HEADLESS
         $options.AddArgument("--headless=new") 
         $options.AddArgument("--no-sandbox")
         $options.AddArgument("--disable-dev-shm-usage")
         
-        # Variable para la URL (puedes definirla aquí o pasarla como parámetro)
-        $urlPagina = "https://www.proticketing.com/tu_evento" 
+        Write-Host "--- Iniciando Navegador ---" -ForegroundColor Cyan
+        $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($options)
+        
+        $driver.Navigate().GoToUrl($urlPagina)
+        Start-Sleep -Seconds 10 
         
         try {
-            Write-Host "--- Iniciando Validación Cloudflare en GitHub ---" -ForegroundColor Cyan
-            
-            # En GitHub Actions, el driver ya está en el PATH, no necesitamos $driverPath
-            # Pasamos $null o simplemente no ponemos ruta
-            $driver = [OpenQA.Selenium.Chrome.ChromeDriver]::new($options)
-        
-            $driver.Navigate().GoToUrl($urlPagina)
-            Write-Host "Esperando aviso de cookies..." -ForegroundColor Yellow
-            Start-Sleep -Seconds 10 # Un poco más de tiempo por ser entorno nube
-        
-            # 2. INTERACTUAR CON EL BOTÓN DE COOKIES
-            try {
-                $botonAceptar = $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(., 'Aceptar Todas')]"))
-                if ($botonAceptar) {
-                    Write-Host "Pulsando 'Aceptar Todas'..." -ForegroundColor Green
-                    $botonAceptar.Click()
-                    Start-Sleep -Seconds 5 
-                }
+            $botonAceptar = $driver.FindElement([OpenQA.Selenium.By]::XPath("//button[contains(., 'Aceptar Todas')]"))
+            if ($botonAceptar) {
+                $botonAceptar.Click()
+                Start-Sleep -Seconds 5 
             }
-            catch {
-                Write-Warning "No se detectó botón de cookies o ya se pasó."
-            }
+        } catch { }
         
-            # 3. CAPTURAR COOKIES
-            $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
-            $session.UserAgent = $uAgent
-        
-            $cookiesSelenium = $driver.Manage().Cookies.AllCookies
-            foreach ($c in $cookiesSelenium) {
-                $newCookie = New-Object System.Net.Cookie($c.Name, $c.Value, "/", ".proticketing.com")
-                $session.Cookies.Add($newCookie)
-                Write-Host "Capturada: $($c.Name)" -ForegroundColor Gray
-            }
-        
-            Write-Host "Sesión preparada con éxito." -ForegroundColor Green
-        
+        $session = New-Object Microsoft.PowerShell.Commands.WebRequestSession
+        $session.UserAgent = $uAgent
+        foreach ($c in $driver.Manage().Cookies.AllCookies) {
+            $newCookie = New-Object System.Net.Cookie($c.Name, $c.Value, "/", ".oneboxtds.com")
+            $session.Cookies.Add($newCookie)
         }
-        catch {
-            Write-Error "Error en la ejecución: $($_.Exception.Message)"
-        }
-                
+        
+        $driver.Quit()
+        $driver = $null
 
-        # 5. LLAMADA A LA API CON HEADERS DINÁMICOS
-        Write-Host "Consultando API Proticketing..." -ForegroundColor Cyan
-        
-        $headers = @{
-            "Accept"           = "application/json, text/plain, */*"
-            "Referer"          = $urlPagina
-            "ob-channel-id"    = "553"
-            "ob-client"        = "channels"
-            "ob-language"      = "es-ES"
-            "ob-session-token" = $dynamicToken # <--- USAMOS EL TOKEN QUE ACABAMOS DE ROBAR
-        }
-
+        # API Llamada
+        $headers = @{ "Accept" = "application/json"; "Referer" = $urlPagina; "ob-channel-id" = "553" }
         $response = Invoke-RestMethod -Uri $urlApi -WebSession $session -Headers $headers
 
-        # 6. PROCESAMIENTO DE EVENTOS
         if ($response.data) {
-            Write-Host "¡Éxito! $($response.data.Count) eventos recibidos." -ForegroundColor Green
-            
             $listaEventos = foreach ($e in $response.data) {
-                # Extraer precio de forma segura
-                $precio = if ($e.minimumPrice) { "$($e.minimumPrice) EUR" } else { "Consultar" }
-
                 [PSCustomObject]@{
                     Nombre  = $e.name
-                    Cuando  = "Desde: $($e.date.start) Hasta: $($e.date.end)"
-                    Precio  = $precio
+                    Cuando  = $e.date.start
+                    Precio  = $e.minimumPrice
                     Recinto = $e.venues[0].name
                 }
             }
 
-            # 7. GESTIÓN DE CSV Y NOVEDADES
             $csvPath = Join-Path $PSScriptRoot "eventos_abonoteatro_proticketing.csv"
-            
             $eventosNuevos = @()
             if (Test-Path $csvPath) {
-                $eventosAnteriores = Import-Csv $csvPath -Delimiter ";"
-                $nombresAnteriores = $eventosAnteriores.Nombre
-                $eventosNuevos = $listaEventos | Where-Object { $_.Nombre -notin $nombresAnteriores }
+                $anteriores = (Import-Csv $csvPath -Delimiter ";").Nombre
+                $eventosNuevos = $listaEventos | Where-Object { $_.Nombre -notin $anteriores }
             } else {
                 $eventosNuevos = $listaEventos
             }
 
             $listaEventos | Export-Csv -Path $csvPath -NoTypeInformation -Encoding UTF8 -Delimiter ";"
             
-        } else {
-            Write-Host "No se han conseguido datos de la API." -ForegroundColor Red
-        }
-
-        # 8. TELEGRAM (Solo si hay novedades)
-        if ($eventosNuevos.Count -gt 0) {
-            Write-Host "Hay $($eventosNuevos.Count) eventos nuevos. Enviando a Telegram..." -ForegroundColor Magenta
-            
-            $telegramToken = $env:TELEGRAM_TOKEN
-            $archivoUsuarios = Join-Path $PSScriptRoot "usuarios_telegram.txt"
-            
-            # Obtener IDs de Telegram de forma limpia
-            $chatIds = Get-Content $archivoUsuarios | ForEach-Object { 
-                if ($_ -match '(\d+)') { $matches[1] } 
-            } | Select-Object -Unique
-
-            foreach ($nuevo in $eventosNuevos) {
-                foreach ($chatId in $chatIds) {
-                    $texto = "⚠️ <b>NUEVO EVENTO ABONOTEATRO - ATENTOS</b> ⚠️`n`n" +
-                            "📌 <b>$($nuevo.Nombre)</b>`n" +
-                            "📍 Recinto: $($nuevo.Recinto)`n" +
-                            "💰 Precio: $($nuevo.Precio)`n" +
-                            "📅 $($nuevo.Cuando)"
-
-                    $body = @{
-                        chat_id = $chatId
-                        text    = $texto
-                        parse_mode = "HTML"
-                    }
-                    
-                    try {
-                        #write-host $eventosNuevos
-                        Invoke-RestMethod -Uri "https://api.telegram.org/bot$telegramToken/sendMessage" -Method Post -Body $body
-                    } catch {
-                        Write-Warning "No se pudo enviar mensaje al chat $chatId"
+            # Telegram
+            if ($eventosNuevos.Count -gt 0) {
+                $telegramToken = $env:TELEGRAM_TOKEN
+                $archivoUsuarios = Join-Path $PSScriptRoot "usuarios_telegram.txt"
+                if (Test-Path $archivoUsuarios) {
+                    $chatIds = Get-Content $archivoUsuarios | Where-Object { $_ -match '\d+' }
+                    foreach ($nuevo in $eventosNuevos) {
+                        foreach ($chatId in $chatIds) {
+                            $texto = "⚠️ <b>NUEVO: $($nuevo.Nombre)</b>`n📍 $($nuevo.Recinto)"
+                            $body = @{ chat_id = $chatId; text = $texto; parse_mode = "HTML" }
+                            Invoke-RestMethod -Uri "https://api.telegram.org/bot$telegramToken/sendMessage" -Method Post -Body $body
+                        }
                     }
                 }
             }
-        } else {
-            $ultimaHora = Get-Date -Format "HH:mm:ss"
-            Write-Host "Sin cambios desde la última ejecución: $ultimaHora" -ForegroundColor Blue
         }
     }
     catch {
-        Write-Error "Fallo general: $($_.Exception.Message)"
-        if ($driver) { $driver.Quit() }
+        Write-Error "Error: $($_.Exception.Message)"
+    }
+    finally {
+        if ($null -ne $driver) { $driver.Quit() }
     }
 }
 
-function Iniciar-CuentaAtras {
-    param([int]$segundosTotales)
+# ==========================================
+# 4. EJECUCIÓN DEL BUCLE (5 VECES)
+# ==========================================
+Write-Host "Iniciando ciclo de 5 comprobaciones..." -ForegroundColor Cyan
+
+for ($intento = 1; $intento -le 5; $intento++) {
+    Write-Host "`n>>> EJECUCIÓN $intento DE 5 <<<" -ForegroundColor Green
     
-    for ($i = $segundosTotales; $i -gt 0; $i--) {
-        # Calculamos minutos y segundos para que se vea como 04:59, 04:58...
-        $tiempo = New-TimeSpan -Seconds $i
-        $reloj = "{0:D2}:{1:D2}" -f $tiempo.Minutes, $tiempo.Seconds
-        
-        # `r vuelve al inicio de la línea para sobrescribir el texto anterior
-        Write-Host -NoNewline "`rPróxima ejecución en: $reloj " -ForegroundColor Gray
-        
-        Start-Sleep -Seconds 1
-    }
-    # Limpiamos la línea al terminar la cuenta atrás
-    Write-Host "`r" + (" " * 30) + "`r" -NoNewline
-}
-
-# 3. Bucle infinito
-while ($true) {
-    # Ejecutamos la tarea
     MiFuncionPrincipal
     
-    # Iniciamos la espera de 5 minutos (300 segundos)
-    Iniciar-CuentaAtras -segundosTotales 300
+    if ($intento -lt 5) {
+        Iniciar-CuentaAtras -segundosTotales 120 
+    }
 }
+
+Write-Host "`nProceso finalizado correctamente." -ForegroundColor Cyan
