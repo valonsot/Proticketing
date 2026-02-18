@@ -2,8 +2,8 @@ name: Ejecutar Bot Abonoteatro
 
 # 1. CUÁNDO SE EJECUTA
 on:
-  schedule:
-    - cron: '*/15 * * * *' # Se ejecuta cada 15 minutos automáticamente
+  #schedule:
+  #  - cron: '*/15 * * * *' # Se ejecuta cada 15 minutos automáticamente
   workflow_dispatch:      # Permite ejecutarlo a mano desde la pestaña "Actions" en GitHub
 
 jobs:
