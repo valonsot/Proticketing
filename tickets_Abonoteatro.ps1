@@ -115,6 +115,4 @@ function MiFuncionPrincipal {
 }
 
 MiFuncionPrincipal
-}
 
-MiFuncionPrincipal
