@@ -42,17 +42,21 @@ jobs:
           path: ./*.png
 
       # 6. GUARDAR CAMBIOS (CSV de eventos)
-      # Este paso permite que el bot guarde qué eventos ya notificó y no los repita
       - name: Sincronizar cambios con el repositorio
+        shell: pwsh
         run: |
           git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
           
-          # Añadimos los cambios producidos en el CSV
-          git add .
+          # Agregamos el archivo CSV específicamente
+          git add eventos_abonoteatro_proticketing.csv
           
-          # Solo hace commit y push si el archivo ha cambiado (hay eventos nuevos)
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Actualizar lista de eventos conocidos" && git push)
-          git add .
-          # Solo hace commit si el CSV ha cambiado (hay eventos nuevos)
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Eventos detectados" && git push))
+          # Comprobamos si hay cambios reales en el "stage" de git
+          $cambios = git status --porcelain
+          if ($cambios) {
+              Write-Host "Cambios detectados en el CSV. Realizando commit..."
+              git commit -m "Auto-update: Actualizar lista de eventos conocidos"
+              git push
+          } else {
+              Write-Host "No hay cambios nuevos para guardar."
+          }
