@@ -21,7 +21,7 @@ function MiFuncionPrincipal {
         $module = Get-Module -ListAvailable Selenium | Select-Object -First 1
         Add-Type -Path (Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName)
 
-        # 2. CONFIGURACIÓN CHROME "HUMANO"
+        # 2. CONFIGURACIÓN CHROME
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
         $options.AddArgument("--headless=new") 
@@ -37,28 +37,31 @@ function MiFuncionPrincipal {
         $rutaDriver = if ($env:CHROMEWEBDRIVER) { $env:CHROMEWEBDRIVER } else { $PSScriptRoot }
         $driver = New-Object OpenQA.Selenium.Chrome.ChromeDriver($rutaDriver, $options)
         
-        # 4. NAVEGAR A LA WEB PRINCIPAL (Para cookies)
-        Write-Host "Cargando página principal..." -ForegroundColor Cyan
+        # 4. PASO 1: CARGAR WEB PRINCIPAL
+        Write-Host "Paso 1: Cargando página principal para obtener cookies..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlPagina)
-        Start-Sleep -Seconds (Get-Random -Minimum 12 -Maximum 18)
+        Start-Sleep -Seconds 15
 
-        # 5. PEDIR LA API DESDE EL NAVEGADOR (Evasión total del 403)
-        Write-Host "Consultando API a través del navegador..." -ForegroundColor Cyan
+        # 5. PASO 2: NAVEGAR A LA API
+        Write-Host "Paso 2: Accediendo a la API a través del navegador..." -ForegroundColor Cyan
         $driver.Navigate().GoToUrl($urlApi)
-        Start-Sleep -Seconds 5
+        Start-Sleep -Seconds 8
 
-        # Extraer el contenido del JSON que muestra el navegador
-        $jsonRaw = $driver.FindElement([OpenQA.Selenium.By]::TagName("pre")).Text
+        # --- EXTRACCIÓN ROBUSTA DE JSON ---
+        # Intentamos obtener el texto del body, quitando posibles etiquetas HTML si el navegador las añade
+        $rawText = $driver.FindElement([OpenQA.Selenium.By]::TagName("body")).Text
         
-        if (-not $jsonRaw) {
-            # Si no hay etiqueta <pre>, intentamos capturar todo el body (algunas versiones de Chrome lo muestran así)
-            $jsonRaw = $driver.FindElement([OpenQA.Selenium.By]::TagName("body")).Text
+        # Si el texto parece HTML (tiene <html> o <body>), es que no hemos cargado el JSON sino una página de error
+        if ($rawText -match "<html" -or $rawText -match "Forbidden" -or $rawText -match "Cloudflare") {
+            Write-Warning "¡Bloqueo detectado! No se recibió JSON. Título: $($driver.Title)"
+            $driver.GetScreenshot().SaveAsFile("error_debug.png")
+            throw "El servidor denegó el acceso (403) o pidió verificación humana."
         }
 
-        $response = $jsonRaw | ConvertFrom-Json
+        $response = $rawText | ConvertFrom-Json
 
         if ($response.data) {
-            Write-Host "¡Acceso concedido! Procesando $($response.data.Count) eventos..." -ForegroundColor Green
+            Write-Host "¡Acceso concedido! Procesando eventos..." -ForegroundColor Green
             $listaEventos = foreach ($e in $response.data) {
                 [PSCustomObject]@{
                     Nombre  = $e.name.Trim()
@@ -83,8 +86,7 @@ function MiFuncionPrincipal {
             # TELEGRAM
             if ($eventosNuevos.Count -gt 0) {
                 $token = $env:TELEGRAM_TOKEN
-                $userFile = Join-Path $PSScriptRoot "usuarios_telegram.txt"
-                $chatIds = Get-Content $userFile | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
+                $chatIds = Get-Content (Join-Path $PSScriptRoot "usuarios_telegram.txt") | ForEach-Object { if ($_ -match '(\d+)') { $matches[1] } } | Select-Object -Unique
                 
                 foreach ($ev in $eventosNuevos) {
                     $msg = "⚠️ <b>NUEVO EVENTO</b> ⚠️`n`n📌 <b>$(Escape-Html $ev.Nombre)</b>`n📍 $(Escape-Html $ev.Recinto)`n💰 $($ev.Precio)"
@@ -95,16 +97,13 @@ function MiFuncionPrincipal {
                     Start-Sleep -Milliseconds 500
                 }
             }
-        } else {
-            throw "La API no devolvió datos. Posible bloqueo."
         }
     }
     catch { 
         Write-Error "Fallo: $($_.Exception.Message)" 
-        if ($driver) {
-            $pathPng = Join-Path $env:GITHUB_WORKSPACE "error_debug.png"
-            Write-Host "Guardando captura de seguridad en: $pathPng" -ForegroundColor Magenta
-            $driver.GetScreenshot().SaveAsFile($pathPng)
+        if ($null -ne $driver) {
+            Write-Host "Guardando captura de pantalla de emergencia..." -ForegroundColor Magenta
+            $driver.GetScreenshot().SaveAsFile("error_debug.png")
         }
     }
     finally { 
