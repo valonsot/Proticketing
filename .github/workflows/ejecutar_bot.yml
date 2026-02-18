@@ -33,7 +33,15 @@ jobs:
         run: |
           ./tickets_Abonoteatro.ps1
 
-      # 5. GUARDAR CAMBIOS (CSV de eventos)
+      # 5. SACO PANTALLA DE ERROR
+      - name: Subir captura de error si falla
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: screenshots-error
+          path: ./*.png
+
+      # 6. GUARDAR CAMBIOS (CSV de eventos)
       # Este paso permite que el bot guarde qué eventos ya notificó y no los repita
       - name: Sincronizar cambios con el repositorio
         run: |
