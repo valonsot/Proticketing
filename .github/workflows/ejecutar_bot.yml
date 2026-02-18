@@ -2,38 +2,24 @@ name: Ejecutar Bot Abonoteatro
 
 # 1. CUÁNDO SE EJECUTA
 on:
-  #schedule:
-  #  - cron: '*/15 * * * *' # Se ejecuta cada 15 minutos automáticamente
-  workflow_dispatch:      # Permite ejecutarlo a mano desde la pestaña "Actions" en GitHub
+  schedule:
+    - cron: '0 * * * *' # Se ejecuta automáticamente cada hora
+  workflow_dispatch:      # Permite ejecutarlo a mano desde la pestaña "Actions"
 
 jobs:
   build:
-    runs-on: windows-latest # Windows es mejor para Selenium en GitHub Actions
+    runs-on: windows-latest # Windows tiene Chrome y el Driver preinstalados
 
     permissions:
-      contents: write # Permiso para que el bot pueda guardar cambios en el CSV o borrar logs
+      contents: write # Permiso obligatorio para guardar los cambios del CSV en el repo
 
     steps:
-      - name: Descargar código
-        uses: actions/checkout@v4
-
-      # ESTE PASO ASEGURA QUE TENGAS EL DRIVER CORRECTO
-      - name: Instalar Chrome Driver oficial
-        uses: cesar-rodriguez/setup-chromedriver@v1
-
-      - name: Ejecutar Bot
-        shell: pwsh
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        run: |
-          ./tickets_Abonoteatro.ps1
-      
-      
-      # 2. DESCARGAR EL CÓDIGO DEL REPOSITORIO
+      # 2. DESCARGAR EL CÓDIGO
       - name: Checkout del código
         uses: actions/checkout@v4
 
-      # 3. INSTALAR MÓDULOS NECESARIOS (Selenium)
+      # 3. INSTALAR MÓDULO SELENIUM
+      # Lo instalamos aquí para que el entorno esté listo antes de lanzar el script
       - name: Instalar Módulo Selenium
         shell: pwsh
         run: |
@@ -43,16 +29,17 @@ jobs:
       - name: Ejecutar Script de Tickets
         shell: pwsh
         env:
-          # Mapeamos el secreto de GitHub a una variable que entienda PowerShell
+          # Pasamos el Token de Telegram desde los Secrets de GitHub
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         run: |
           ./tickets_Abonoteatro.ps1
 
-      # 5. GUARDAR CAMBIOS (Si el script modificó el CSV o borró logs)
+      # 5. GUARDAR CAMBIOS (CSV y Logs)
+      # Esto hace que el bot "recuerde" los eventos que ya notificó
       - name: Sincronizar cambios con el repositorio
         run: |
           git config --global user.name 'GitHub Action Bot'
           git config --global user.email 'action@github.com'
           git add .
-          # Solo hace commit si hay algo nuevo que subir
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Logs y archivos de datos" && git push)
+          # Solo hace commit si el CSV ha cambiado (hay eventos nuevos)
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update: Eventos detectados" && git push))
