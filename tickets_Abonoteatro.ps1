@@ -129,6 +129,3 @@ for ($i = 1; $i -le 5; $i++) {
     MiFuncionPrincipal
     if ($i -lt 5) { Start-Sleep -Seconds 120 }
 }
-    MiFuncionPrincipal
-    if ($i -lt 5) { Iniciar-CuentaAtras -segundosTotales 120 }
-}
