@@ -1,6 +1,17 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # --- CONFIGURACIÓN ---
+$intervaloMinutos = 3
+$duracionTotalHoras = 3
+$segundosEspera = $intervaloMinutos * 60
+
+# Calculamos cuándo debe parar el script
+$inicio = Get-Date
+$fin = $inicio.AddHours($duracionTotalHoras)
+
+$ultimaHora = "Nunca (Primera ejecución)"
+
+# --- CONFIGURACIÓN ---
 $urlPagina = "https://tickets.oneboxtds.com/abonoteatro/events"
 $urlApi = "https://tickets.oneboxtds.com/channels-api/v1/catalog/events?limit=50&offset=0&sort=customOrder%3Aasc&onCarousel=false&channel=abonoteatro"
 $nombreCsv = "eventos_abonoteatro_proticketing.csv"
@@ -134,4 +145,38 @@ function MiFuncionPrincipal {
     }
 }
 
-MiFuncionPrincipal
+function Iniciar-CuentaAtras {
+    param([int]$segundos)
+    for ($i = $segundos; $i -gt 0; $i--) {
+        $tiempo = New-TimeSpan -Seconds $i
+        $reloj = "{0:D2}:{1:D2}" -f $tiempo.Minutes, $tiempo.Seconds
+        Write-Host -NoNewline "`rPróxima revisión en: $reloj (Finaliza a las $($fin.ToString("HH:mm:ss"))) " -ForegroundColor Gray
+        Start-Sleep -Seconds 1
+    }
+    Write-Host "`r" + (" " * 60) + "`r" -NoNewline
+}
+
+# --- BUCLE DE EJECUCIÓN ---
+
+Write-Host "Script iniciado. Se ejecutará cada $intervaloMinutos minutos hasta las $($fin.ToString("HH:mm:ss"))" -ForegroundColor Magenta
+
+# Mientras la hora actual sea menor que la hora de fin...
+while ((Get-Date) -lt $fin) {
+    
+    # 1. Ejecutamos la función
+    MiFuncionSelenium -horaReferencia $ultimaHora
+    
+    # 2. Actualizamos la hora para la siguiente vuelta
+    $ultimaHora = Get-Date -Format "HH:mm:ss"
+    
+    # 3. Verificamos si aún queda tiempo para otra espera
+    if ((Get-Date).AddSeconds($segundosEspera) -lt $fin) {
+        Iniciar-CuentaAtras -segundos $segundosEspera
+    }
+    else {
+        Write-Host "`nSe ha alcanzado el límite de tiempo de 3 horas. Finalizando..." -ForegroundColor Magentax
+        break
+    }
+}
+
+Write-Host "`n[Script Terminado]" -ForegroundColor Gray
