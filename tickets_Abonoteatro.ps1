@@ -1,3 +1,9 @@
+# Configuración de identidad para Git (necesario para poder hacer commits)
+git config --global user.email "github-actions[bot]@users.noreply.github.com"
+git config --global user.name "github-actions[bot]"
+# Configurar para que no pida credenciales (usa el token de la sesión)
+git config --global url."https://x-access-token:${env:GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # --- CONFIGURACIÓN GLOBAL ---
@@ -89,6 +95,9 @@ function MiFuncionSelenium {
             # GUARDADO CRÍTICO: Aquí es donde se actualiza el archivo
             $listaEventos | Export-Csv -Path $pathAlCsv -NoTypeInformation -Encoding UTF8 -Delimiter ";"
             Write-Host "CSV actualizado con $($listaEventos.Count) registros." -ForegroundColor Green
+
+            # NUEVA LÍNEA: Subir a la web de GitHub inmediatamente
+            Subir-CambiosAlRepositorio -archivo $nombreCsv
             
             # 8. TELEGRAM
             if ($eventosNuevos.Count -gt 0) {
@@ -111,6 +120,25 @@ function MiFuncionSelenium {
     }
     finally { 
         if ($null -ne $driver) { $driver.Quit(); $driver.Dispose() }
+    }
+}
+
+function Subir-CambiosAlRepositorio {
+    param($archivo)
+    try {
+        Write-Host "Sincronizando $archivo con el repositorio web..." -ForegroundColor DarkCyan
+        git add $archivo
+        # Solo hacemos commit si hay cambios reales para evitar errores
+        $status = git status --porcelain
+        if ($null -ne $status) {
+            git commit -m "Auto-update: Datos actualizados [$(Get-Date -Format 'HH:mm:ss')]"
+            git push
+            Write-Host "¡Cambios subidos con éxito!" -ForegroundColor Green
+        } else {
+            Write-Host "Sin cambios detectados en el CSV, saltando subida." -ForegroundColor Gray
+        }
+    } catch {
+        Write-Host "No se pudo subir al repositorio: $($_.Exception.Message)" -ForegroundColor Yellow
     }
 }
 
