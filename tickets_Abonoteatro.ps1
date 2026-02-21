@@ -16,6 +16,15 @@ $urlPagina = "https://tickets.oneboxtds.com/abonoteatro/events"
 $urlApi = "https://tickets.oneboxtds.com/channels-api/v1/catalog/events?limit=50&offset=0&sort=customOrder%3Aasc&onCarousel=false&channel=abonoteatro"
 $nombreCsv = "eventos_abonoteatro_proticketing.csv"
 
+# 1. CARGAR SELENIUM
+if (-not (Get-Module -ListAvailable Selenium)) {
+    Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
+}
+
+$module = Get-Module -ListAvailable Selenium | Select-Object -First 1
+$dllPath = Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName
+Add-Type -Path $dllPath
+
 function Escape-Html {
     param([string]$texto)
     if ($null -eq $texto) { return "" }
@@ -25,14 +34,6 @@ function Escape-Html {
 function MiFuncionSelenium {
     $driver = $null
     try {
-        # 1. CARGAR SELENIUM
-        if (-not (Get-Module -ListAvailable Selenium)) {
-            Write-Host "Instalando Selenium..." -ForegroundColor Cyan
-            Install-Module -Name Selenium -Force -Scope CurrentUser -AllowClobber
-        }
-        $module = Get-Module -ListAvailable Selenium | Select-Object -First 1
-        Add-Type -Path (Get-ChildItem -Path $module.ModuleBase -Filter "WebDriver.dll" -Recurse | Select-Object -First 1 -ExpandProperty FullName)
-
         # 2. CONFIGURACIÓN CHROME
         $options = [OpenQA.Selenium.Chrome.ChromeOptions]::new()
         $options.BinaryLocation = "C:\Program Files\Google\Chrome\Application\chrome.exe"
@@ -136,12 +137,17 @@ function MiFuncionSelenium {
         }
     }
     catch { 
-        Write-Error "Fallo: $($_.Exception.Message)" 
-        if ($null -ne $driver) { $driver.GetScreenshot().SaveAsFile("error_debug.png") }
+        Write-Host "⚠️ FALLO EN ESTA EJECUCIÓN: $($_.Exception.Message)" -ForegroundColor Red
+        if ($null -ne $driver) { 
+            try { $driver.GetScreenshot().SaveAsFile("error_debug.png") } catch {}
+        }
     }
     finally { 
-        if ($null -ne $driver) { $driver.Quit() }
-        Write-Host "--- SCRIPT FINALIZADO ---" -ForegroundColor Cyan
+        if ($null -ne $driver) { 
+            $driver.Quit() 
+            $driver.Dispose() # Añadimos Dispose para limpieza profunda
+        }
+        Write-Host "--- ESPERANDO SIGUIENTE CICLO ---" -ForegroundColor Gray
     }
 }
 
