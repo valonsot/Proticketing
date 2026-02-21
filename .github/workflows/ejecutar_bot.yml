@@ -1,10 +1,15 @@
 name: Ejecutar Bot Abonoteatro
 
 on:
-  # schedule:
-  #  - cron: '0 * * * *' # Se ejecuta cada hora
-  workflow_dispatch:      # Permite darle al botón "Run" a mano
+   
+  schedule:
+    - cron: '*/10 * * * *'  # Se ejecuta cada 10 minutos
+  workflow_dispatch:       # Permite darle al botón "Run" a mano (alineado con schedule)
 
+concurrency:
+  group: bot-abonoteatro
+  cancel-in-progress: false 
+   
 jobs:
   build:
     runs-on: windows-latest
