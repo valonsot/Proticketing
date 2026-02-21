@@ -13,7 +13,7 @@ $ultimaHora = "Nunca (Primera ejecución)"
 
 # --- CONFIGURACIÓN ---
 $urlPagina = "https://tickets.oneboxtds.com/abonoteatro/events"
-$urlApi = "https://tickets.oneboxtds.com/channels-api/v1/catalog/events?limit=50&offset=0&sort=customOrder%3Aasc&onCarousel=false&channel=abonoteatro"
+$urlApi = "https://tickets.oneboxtds.com/channels-api/v1/catalog/events?limit=70&offset=0&sort=customOrder%3Aasc&onCarousel=false&channel=abonoteatro"
 $nombreCsv = "eventos_abonoteatro_proticketing.csv"
 
 # 1. CARGAR SELENIUM
