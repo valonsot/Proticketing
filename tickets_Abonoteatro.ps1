@@ -1,15 +1,38 @@
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
-# --- CONFIGURACIÓN ---
-$intervaloMinutos = 3
-$duracionTotalHoras = 3
-$segundosEspera = $intervaloMinutos * 60
-
-# Calculamos cuándo debe parar el script
+# --- CONFIGURACIÓN DE TIEMPO ---
 $inicio = Get-Date
-$fin = $inicio.AddHours($duracionTotalHoras)
-
+$fin = $inicio.AddHours(3)
 $ultimaHora = "Nunca (Primera ejecución)"
+
+Write-Host "Script iniciado. Finalizará a las $($fin.ToString("HH:mm:ss"))" -ForegroundColor Magenta
+
+while ((Get-Date) -lt $fin) {
+    
+    # 1. Ejecutamos tu función de Selenium
+    MiFuncionSelenium -horaReferencia $ultimaHora
+    
+    # 2. Actualizamos la hora para la próxima comparativa
+    $ultimaHora = Get-Date -Format "HH:mm:ss"
+
+    # 3. Calculamos un tiempo de espera aleatorio para esta vuelta
+    # Get-Random genera un número entre -Minimum (incluido) y -Maximum (excluido)
+    $esperaAleatoria = Get-Random -Minimum 170 -Maximum 211
+    
+    # Convertimos los segundos a un formato legible para el log
+    $m = [Math]::Floor($esperaAleatoria / 60)
+    $s = $esperaAleatoria % 60
+    Write-Host "Variación aplicada: Esperando $m min $s seg hasta la próxima revisión..." -ForegroundColor DarkGray
+
+    # 4. Verificamos si aún queda tiempo antes de entrar en la espera
+    if ((Get-Date).AddSeconds($esperaAleatoria) -lt $fin) {
+        Iniciar-CuentaAtras -segundosTotales $esperaAleatoria
+    }
+    else {
+        Write-Host "`nQueda poco para el cierre. Finalizando script..." -ForegroundColor Magenta
+        break
+    }
+}
 
 # --- CONFIGURACIÓN ---
 $urlPagina = "https://tickets.oneboxtds.com/abonoteatro/events"
