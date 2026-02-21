@@ -156,7 +156,7 @@ function Iniciar-CuentaAtras {
     for ($i = $segundos; $i -gt 0; $i--) {
         $tiempo = New-TimeSpan -Seconds $i
         $reloj = "{0:D2}:{1:D2}" -f $tiempo.Minutes, $tiempo.Seconds
-        Write-Host -NoNewline "`rPróxima revisión en: $reloj (Finaliza a las $($fin.ToString("HH:mm:ss"))) " -ForegroundColor Gray
+        # Write-Host -NoNewline "`rPróxima revisión en: $reloj (Finaliza a las $($fin.ToString("HH:mm:ss"))) " -ForegroundColor Gray
         Start-Sleep -Seconds 1
     }
     Write-Host "`r" + (" " * 60) + "`r" -NoNewline
