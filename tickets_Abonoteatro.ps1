@@ -22,7 +22,7 @@ function Escape-Html {
     return $texto.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;")
 }
 
-function MiFuncionPrincipal {
+function MiFuncionSelenium {
     $driver = $null
     try {
         # 1. CARGAR SELENIUM
