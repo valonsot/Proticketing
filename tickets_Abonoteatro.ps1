@@ -147,9 +147,10 @@ function Iniciar-CuentaAtras {
     for ($i = $segundosTotales; $i -gt 0; $i--) {
         $tiempo = New-TimeSpan -Seconds $i
         $reloj = "{0:D2}:{1:D2}" -f $tiempo.Minutes, $tiempo.Seconds
-        Write-Host -NoNewline "`rPróxima revisión en: $reloj | Fin del script: $($fin.ToString('HH:mm:ss')) " -ForegroundColor Gray
+        # Write-Host -NoNewline "`rPróxima revisión en: $reloj | Fin del script: $($fin.ToString('HH:mm:ss')) " -ForegroundColor Gray
         Start-Sleep -Seconds 1
     }
+    Write-Host -NoNewline "`rPróxima revisión en: $reloj | Fin del script: $($fin.ToString('HH:mm:ss')) " -ForegroundColor Gray
     Write-Host "`r" + (" " * 70) + "`r" -NoNewline
 }
 
