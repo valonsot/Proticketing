@@ -1,35 +1,33 @@
-name: Limpiar Historial de Ejecuciones
+name: Limpiar Ejecuciones Saltadas
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Una vez al día
-  workflow_dispatch:     # Botón manual
+    - cron: '0 0 * * *' # Se ejecuta una vez al día
+  workflow_dispatch:     # Botón manual para limpiar cuando quieras
 
 jobs:
-  delete-runs:
+  delete-skipped:
     runs-on: ubuntu-latest
     permissions:
-      actions: write # Permiso para borrar
+      actions: write
     steps:
-      - name: Borrar ejecuciones saltadas, canceladas y fallidas
+      - name: Borrar solo ejecuciones saltadas (skipped)
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
         run: |
-          # Lista de estados a limpiar (Corregido: 'failure' en lugar de 'failed')
-          for status in skipped cancelled failure; do
-            echo "Buscando ejecuciones con estado: $status..."
-            
-            # Obtenemos los IDs. Especificamos el --repo para evitar el error de "not a git repo"
-            ids=$(gh run list --repo $REPO --status $status --limit 100 --json databaseId --jq '.[].databaseId')
-            
-            if [ -z "$ids" ]; then
-              echo "No hay nada que borrar para el estado: $status"
-            else
-              for id in $ids; do
-                echo "Borrando ejecución ID: $id"
-                gh run delete --repo $REPO $id
-              done
-            fi
-          done
-          echo "Limpieza completada correctamente."
+          echo "Buscando ejecuciones saltadas por concurrencia..."
+          
+          # Obtenemos los IDs de las ejecuciones con estado 'skipped'
+          ids=$(gh run list --repo $REPO --status skipped --limit 100 --json databaseId --jq '.[].databaseId')
+          
+          if [ -z "$ids" ]; then
+            echo "No hay ejecuciones saltadas para borrar."
+          else
+            echo "Se han encontrado ejecuciones para eliminar."
+            for id in $ids; do
+              echo "Borrando ejecución saltada ID: $id"
+              gh run delete --repo $REPO $id
+            done
+            echo "Limpieza finalizada."
+          fi
