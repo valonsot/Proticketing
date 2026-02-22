@@ -1,0 +1,27 @@
+name: Limpiar Historial de Ejecuciones
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Se ejecuta cada noche a las 00:00
+  workflow_dispatch:     # Permite ejecutarlo a mano cuando quieras
+
+jobs:
+  delete-runs:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write # Permiso necesario para borrar historial
+    steps:
+      - name: Borrar ejecuciones saltadas y canceladas
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 1. Obtener y borrar ejecuciones con estado "skipped" (las que salta la concurrencia)
+          gh run list --status skipped --limit 100 --json databaseId --jq '.[].databaseId' | xargs -I{} gh run delete {}
+          
+          # 2. Obtener y borrar ejecuciones con estado "cancelled"
+          gh run list --status cancelled --limit 100 --json databaseId --jq '.[].databaseId' | xargs -I{} gh run delete {}
+          
+          # 3. (Opcional) Borrar ejecuciones fallidas (failed) si también quieres limpiar esas
+          gh run list --status failed --limit 100 --json databaseId --jq '.[].databaseId' | xargs -I{} gh run delete {}
+
+          echo "Limpieza completada."
