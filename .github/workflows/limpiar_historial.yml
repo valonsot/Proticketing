@@ -2,7 +2,7 @@ name: Limpiar Ejecuciones Basura (Skipped y Cancelled)
 
 on:
   schedule:
-    - cron: '0 0 * * *' # Una vez al día
+    - cron: '0 */2 * * *'
   workflow_dispatch:     # Botón manual
 
 jobs:
